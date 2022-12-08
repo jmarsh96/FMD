@@ -819,7 +819,7 @@ ProcessOutputMCMC <- function(filename, parameters) {
   ## work out how to do this better in future with different types
   num_parameters <- num_parameters -1 # correction for the loglik
   res <- read.table(filename)
-  browser()
+  #browser()
   if(!is.na(lat_period_distribution)) {
     N <- (ncol(res)-num_parameters)/3  
   } else {
@@ -960,4 +960,45 @@ PlotOutbreak <- function(simulated_data) {
     text(cur_time, loc, i-1)
   }
   axis(2, at=1:length(ever_infected), labels=ever_infected-1)
+}
+
+## Return a list where each entry contains the marginal posterior distribution for the ith
+## ever_infected
+CalculateSourceList <- function(res, simulated_data) {
+  ever_infected <- which(simulated_data$epi_data$exposure_times != -1)
+  source_list <- vector('list',length(ever_infected))
+  for(i in 1:length(ever_infected)) {
+    post_source_distribution <- table(res$source[,ever_infected[i]])/sum(table(res$source[,ever_infected[i]]))
+    source_list[[i]] <- post_source_distribution
+  } 
+  return(source_list)
+}
+
+ReturnSourceTable <- function(res, simulated_data) {
+  ever_infected <- which(simulated_data$epi_data$exposure_times != -1)
+  source_data <- data.frame("id" = ever_infected,
+                            "inferred_source" = NA,
+                            "posterior_probability" = NA,
+                            "true_source" = simulated_data$epi_data$source[ever_infected],
+                            "match" = NA)
+  source_list <- CalculateSourceList(res, simulated_data)
+  for(i in 1:length(ever_infected)) {
+    post_source_dist <- source_list[[i]]
+    max_loc <- which.max(post_source_dist)
+    post_prob <- post_source_dist[max_loc]
+    inferred_source <- as.numeric(names(post_source_dist)[max_loc])
+    if(inferred_source != -1) inferred_source <- inferred_source + 1
+    source_data$inferred_source[i] <- inferred_source
+    source_data$posterior_probability[i] <- post_prob
+    source_data$match[i] <- ifelse(source_data$inferred_source[i] == source_data$true_source[i], 1, 0)
+  }
+  return(source_data)
+}
+
+CalculateSourceInformation <- function(res, simulated_data) {
+  source_table <- ReturnSourceTable(res, simulated_data)
+  accuracy <- mean(source_table$match)
+  out <- list("source_table" = source_table,
+              "accuracy" = accuracy)
+  return(out)
 }
