@@ -92,6 +92,13 @@ std::vector<double> subset(std::vector<int> index, std::vector<double> x)
   return out;
 }
 
+int SampleVector(std::vector<int> x)
+{
+  double U = R::runif(0.0,1.0);
+  int length = x.size();
+  return x[floor(U*length)];
+}
+
 // For two vectors a and b, this is equivalent to c(a,b)
 template<typename T>
 std::vector<T> CombineVectors(std::vector<T> a, std::vector<T> b)
@@ -237,6 +244,7 @@ public:
   
   // Functions
   std::vector<int> ReturnPossibleInfectors(int target);
+  void ReshuffleSources();
   
   // Likelihood functions
   double CalculateDistance(int i, int j);
@@ -408,6 +416,7 @@ Data::Data(int sequence_length_,
   std::vector<int> coltime_distances_(imported_idx.size());
   
   bool impute_genetic_distances = true;
+  int num_tries = 500;
   if(impute_genetic_distances)
   {
     bool valid_config = false;
@@ -424,8 +433,31 @@ Data::Data(int sequence_length_,
         valid_config = true;
         break;
       }
-      if(counter > 5000) stop("cannot find valid configuration");
-      counter++;
+      if(counter > num_tries) break;
+    }
+    
+    // If we get this far, try and reshuffle the sources
+    counter = 0;
+    while(!valid_config)
+    {
+      Data data_can((*this));
+      data_can.ReshuffleSources();
+      data_can.CalculateGenSourceVector();
+      std::vector<int> coltime_distances_(imported_idx.size());
+      data_can.coltime_distances = coltime_distances_;
+      data_can.UpdateImputedNodes();
+      data_can.CalculateLoglik();
+      if(data_can.loglik != R_NegInf)
+      {
+        (*this) = data_can;
+        valid_config = true;
+        break;
+      }
+      if(counter > num_tries)
+      {
+        stop("cannot find valid configuration");
+        counter++;
+      }
     }
   }
   else
@@ -437,6 +469,15 @@ Data::Data(int sequence_length_,
   
   
   std::cout << "Data initialised - loglik = " << loglik << std::endl;
+}
+
+void Data::ReshuffleSources()
+{
+  for(auto i : ever_infected)
+  {
+    std::vector<int> possible_infectors = ReturnPossibleInfectors(i);
+    source[i] = SampleVector(possible_infectors);
+  }
 }
 
 double Data::CalculateDistance(int i, int j)
@@ -718,7 +759,7 @@ void Data::CalculateExposureLikelihood(bool verbose)
 
 void Data::CalculateGeneticLikelihood(bool verbose)
 {
-  //verbose = false;
+  verbose = true;
   double genetic_likelihood_ = 0.0;
   double lambda = parameters[6]; // mutation rate
   
@@ -1026,12 +1067,7 @@ void Data::WriteOutputToFile(std::ofstream &myfile)
   myfile << std::endl;
 }
 
-int SampleVector(std::vector<int> x)
-{
-  double U = R::runif(0.0,1.0);
-  int length = x.size();
-  return x[floor(U*length)];
-}
+
 
 
 std::vector<int> Data::ReturnTargetSwabsAtTime(const int target, 

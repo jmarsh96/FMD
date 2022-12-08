@@ -15,7 +15,7 @@ mut_model <- "JC"
 
 ## Parameter values
 alpha <- 1
-beta <- 0.003
+beta <- 0.004
 gamma <- 1
 kappa <- 0.02
 delta <- 5
@@ -74,7 +74,7 @@ truth <- list("alpha" = alpha,
 par_names <- names(truth)
 
 MCMC_options <- list("initial_chain_state" = as.numeric(truth[1:7]),
-                     "iterations" = 1000,
+                     "iterations" = 5000,
                      "prior_parameters" = list("alpha_shape" = 1e-3,
                                                "alpha_rate" = 1e-3,
                                                "beta_shape" = 1e-3,
@@ -122,14 +122,5 @@ MCMC_SEIR_JC(MCMC_options,
 
 res <- ProcessOutputMCMC("output.dat", par_names) 
 PlotTrace(res, par_names, truth) 
-
-
-
-
-
-
-
-
-
-
-CalculateSourceInformation(res, simulated_data)
+source_data <- CalculateSourceInformation(res, simulated_data)
+source_data
