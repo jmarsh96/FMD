@@ -1,0 +1,20 @@
+1.
+
+# starting options
+num_initial_infectives <- 1
+num_individuals <- 50
+min_fs <- 3
+max_fs <- 50
+
+# epi parameters
+beta <- 0.002
+gamma <- 0.5
+kappa <- 0
+delta <- 5
+
+## genetic parameters
+mutation_rate <- 4*10^(-6)#/1000
+sequence_length <- 8176
+average_import_distance <- 10
+average_variant_distance <- 40
+
