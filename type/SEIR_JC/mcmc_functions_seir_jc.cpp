@@ -300,6 +300,7 @@ public:
   void UpdateDistanceSingle(int node, int &nacc);
   void UpdateExposureTime(int &nacc, bool verbose = false);
   void UpdateInfectionTime(int &nacc, bool verbose = false);
+  //int SampleNewSource(int target, int type);
   
   void WriteOutputToFile(std::ofstream &myfile);
   void WriteConfigurationToFile(std::ofstream &myfile);
@@ -4191,8 +4192,28 @@ void Data::ReturnNodesToImpute(bool verbose)
   
 }
 
+// Weights should be normalise
 int NonUnifSampling(std::vector<int> x, std::vector<double> weights)
 {
+  if(x.size() != weights.size()) stop("Incorrect size of sample or weights when non unif sampling");
+  if(x.size() == 0) stop("cannot sample empty vector");
+  if(x.size() == 1) return x[0];
+  
+  // Check weights add up to 1
+  double weight_sum = 0.0;
+  for(auto w : weights)
+  {
+    weight_sum += w;
+  }
+  double epsilon = 1e-6;
+  if(std::abs(weight_sum-1) > epsilon)
+  {
+    std::cout << "weight sum = " << weight_sum << std::endl;
+    stop("non-normalised weights");
+  }
+  
+  
+  
   double U = R::runif(0.0,1.0);
   double cur_val = 0.0;
   int num_samples = x.size();
@@ -4377,6 +4398,200 @@ void Data::UpdateInfectionTime(int &nacc, bool verbose)
   }
 }
 
+void NormaliseWeights(std::vector<double> &weights)
+{
+  double weight_sum = 0.0;
+  for(auto w : weights)
+  {
+    weight_sum += w;
+  }
+  const double norm_const = 1/weight_sum;
+  for(auto& w : weights)
+  {
+    w *= norm_const;
+  }
+}
+
+double CalculateSourceWeight(std::vector<int> target_gen_idx, std::vector<int> source_gen_idx, Data data)
+{
+  bool verbose = false;
+  if(verbose)
+  {
+    std::cout << "Calculating source weight with target gen idx = ";
+    for(auto i : target_gen_idx)
+    {
+      std::cout << i << " ";
+    }
+    std::cout << " and source gen idx = ";
+    for(auto i : source_gen_idx)
+    {
+      std::cout << i << " ";
+    }
+    std::cout << std::endl;
+  }
+  if(source_gen_idx.size() == 0) return 1;
+  
+  int min_dist = data.sequence_length; 
+  for(auto i : target_gen_idx)
+  {
+    for(auto j : source_gen_idx)
+    {
+      if(data.imputed_nodes[i] == 0 && data.imputed_nodes[j] == 0)
+      {
+        int cur_dist = data.gen_matrix(i,j);
+        min_dist = std::min(min_dist, cur_dist);
+      }
+    }
+  }
+  return std::max(5-min_dist,1);
+}
+
+std::vector<double> CalculateSourceWeightsGenetic(int target, Data data)
+{
+  bool verbose = false;
+  // Return 1 if only one source
+  std::vector<int> possible_infectors = data.ReturnPossibleInfectors(target);
+  if(verbose)
+  {
+    std::cout << "Calculating source weights, possible_infectors = ";
+    PrintVector(possible_infectors);
+  }
+  if(possible_infectors.size() == 1)
+  {
+    std::vector<double> w = {1.0};
+    return w;
+  }
+  
+  // Exit early if target has no genetic sequences
+  std::vector<int> target_gen_idx = WhichVec(target, data.genetic_ids);
+  if(target_gen_idx.size() == 0)
+  {
+    std::vector<double> w(possible_infectors.size(), 1.0);
+    return w;
+  }
+  
+  if(verbose)
+  {
+    std::cout << " Target genetic idx =";
+    PrintVector(target_gen_idx);
+  }
+  
+  // Construct weights by minimum genetic distance
+  std::vector<double> weights;
+  for(auto j : possible_infectors)
+  {
+    std::vector<int> source_gen_idx = WhichVec(j, data.genetic_ids);
+    double source_weight = CalculateSourceWeight(target_gen_idx, source_gen_idx, data);
+    weights.push_back(source_weight);
+  }
+  if(verbose)
+  {
+    std::cout << " Weights = ";
+    PrintVector(weights);
+  }
+  return weights;
+}
+
+// Type of source sampling
+// 0 - Uniform
+// 1 - Spatially
+// 2 - Based on genetic distances
+int SampleNewSource(int target, int type, double &log_prop_ratio, Data data_cur, Data data_can)
+{
+  bool verbose = false;
+  std::vector<int> possible_infectors_cur = data_cur.ReturnPossibleInfectors(target);
+  std::vector<int> possible_infectors_can = data_can.ReturnPossibleInfectors(target);
+  
+  switch(type) {
+  case 0:
+    // Uniform sampling
+  {
+    int source_can = SampleVector(possible_infectors_can);
+    log_prop_ratio += log(possible_infectors_can.size()) - log(possible_infectors_cur.size());
+    return source_can;
+  }
+  case 1:
+    // Spatial sampling
+  {
+    double beta = data_cur.parameters[1];
+    double kappa = data_cur.parameters[3];
+    std::vector<double> weights_cur;
+    std::vector<double> weights_can;
+    for(auto i : possible_infectors_cur)
+    {
+      double dist = data_cur.CalculateDistance(target, i);
+      double contrib = beta*exp(-1*kappa*dist);
+      weights_cur.push_back(contrib);
+    }
+    
+    for(auto i : possible_infectors_can)
+    {
+      double dist = data_cur.CalculateDistance(target, i);
+      double contrib = beta*exp(-1*kappa*dist);
+      weights_can.push_back(contrib);
+    }
+    
+    
+    NormaliseWeights(weights_cur);
+    NormaliseWeights(weights_can);
+
+    int source_cur = data_cur.source[target];
+    int source_can = NonUnifSampling(possible_infectors_can, weights_can);
+
+    int source_loc_cur = WhichVec(source_cur, possible_infectors_cur)[0];
+    int source_loc_can = WhichVec(source_can, possible_infectors_can)[0];
+    
+    log_prop_ratio += log(weights_cur[source_loc_cur]) - log(weights_can[source_loc_can]);
+    return source_can;
+  }
+  case 2:
+  // Genetic distance sampling
+  {
+    // Idea here is to construct some weighted distribution based on the genetic distance between the current target
+    // and the candidate sources
+    
+    std::vector<double> weights_cur = CalculateSourceWeightsGenetic(target, data_cur);
+    std::vector<double> weights_can = CalculateSourceWeightsGenetic(target, data_can);
+    
+    NormaliseWeights(weights_cur);
+    NormaliseWeights(weights_can);
+    
+
+    
+    int source_cur = data_cur.source[target];
+    int source_can = NonUnifSampling(possible_infectors_can, weights_can);
+    
+    if(verbose)
+    {
+      std::cout << "Sample source by genetic distances, source_cur = " << source_cur
+                << ", source_can = " << source_can << std::endl;
+      std::cout << " possible_infectors_can = ";
+      PrintVector(possible_infectors_can);
+      std::cout << " weights_cur = ";
+      PrintVector(weights_cur);
+      std::cout << " weights_can = ";
+      PrintVector(weights_can);
+    }
+    
+
+    
+    int source_loc_cur = WhichVec(source_cur, possible_infectors_cur)[0];
+    int source_loc_can = WhichVec(source_can, possible_infectors_can)[0];
+    
+    log_prop_ratio += log(weights_cur[source_loc_cur]) - log(weights_can[source_loc_can]);
+    return source_can;
+  }
+    
+  default:
+    stop("invalid method for determining new source");
+  }
+  return 1;
+}
+
+
+
+
+
 void Data::UpdateExposureTime(int &nacc, bool verbose)
 {
   verbose = false;
@@ -4403,27 +4618,16 @@ void Data::UpdateExposureTime(int &nacc, bool verbose)
     // Exit early if there are no infectors at the proposed infection time
     if(possible_infectors_can.size()==0) return;
     
-    // Uniformly sample from the available sources
-    int source_can = SampleVector(possible_infectors_can);
+    // Sample a new source
+    int source_can = SampleNewSource(target, 2, log_prop_ratio, (*this), data_can);
     data_can.source[target] = source_can;
-    double latent_period_cur = t_i[target]-t_e[target];
-    double upper = R::dgamma(latent_period_cur,zeta,1/alpha,1) + 
-      log(possible_infectors_can.size());
-    double lower = R::dgamma(latent_period_can,zeta,1/alpha,1) + 
-      log(possible_infectors_cur.size());
-    log_prop_ratio = upper - lower;
     
-    /*
-     std::cout << "R::dgamma(latent_period_cur,zeta,1/alpha,1) = "
-               << R::dgamma(latent_period_cur,zeta,1/alpha,1)
-               << ", log(possible_infectors_can.size()) = "
-               << log(possible_infectors_can.size())
-               << ", R::dgamma(latent_period_can,zeta,1/alpha,1) = "
-               << R::dgamma(latent_period_can,zeta,1/alpha,1)
-               << ", log(possible_infectors_cur.size()) = "
-               << log(possible_infectors_cur.size())
-               << std::endl;
-     */
+    double latent_period_cur = t_i[target]-t_e[target];
+    double upper = R::dgamma(latent_period_cur,zeta,1/alpha,1);
+    double lower = R::dgamma(latent_period_can,zeta,1/alpha,1);
+    log_prop_ratio += upper - lower;
+    
+
     bool impute_genetic_distances = true;
     if(impute_genetic_distances)
     {
@@ -4504,8 +4708,6 @@ void MCMC_SEIR_JC(List MCMC_options,
                   IntegerVector subtype_numbers, 
                   IntegerMatrix gen_matrix)
 {
-  
-
   // Load data from the options
   NumericVector parameters = MCMC_options["initial_chain_state"];
 
@@ -4692,8 +4894,8 @@ void MCMC_SEIR_JC(List MCMC_options,
     {
       for(int i = 0; i < num_augmented_updates; i++)
       {
-        int move = floor(R::runif(0,2));
-        //int move = 0;
+        //int move = floor(R::runif(0,2));
+        int move = 0;
         if(move==0)
         {
           nacc_exp_prop++;

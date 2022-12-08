@@ -2,9 +2,7 @@
 rm(list=ls())
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 source("../../simulation_functions.r")
-Rcpp::sourceCpp("mcmc_functions_dev.cpp")
-
-
+Rcpp::sourceCpp("mcmc_functions_seir_jc.cpp")
 
 ## Simulation settings
 num_individuals <- 50
@@ -17,7 +15,7 @@ mut_model <- "JC"
 
 ## Parameter values
 alpha <- 1
-beta <- 0.0025
+beta <- 0.003
 gamma <- 1
 kappa <- 0.02
 delta <- 5
@@ -76,7 +74,7 @@ truth <- list("alpha" = alpha,
 par_names <- names(truth)
 
 MCMC_options <- list("initial_chain_state" = as.numeric(truth[1:7]),
-                     "iterations" = 5000,
+                     "iterations" = 1000,
                      "prior_parameters" = list("alpha_shape" = 1e-3,
                                                "alpha_rate" = 1e-3,
                                                "beta_shape" = 1e-3,
@@ -107,7 +105,7 @@ MCMC_options <- list("initial_chain_state" = as.numeric(truth[1:7]),
                                                 "lambda" = 0.000001),
                      "num_aug_updates" = 50)
 
-set.seed(2)
+#set.seed(2)
 MCMC_SEIR_JC(MCMC_options,
              simulated_data$gen_data$observed$N,
              simulated_data$epi_data$exposure_times,
@@ -131,34 +129,7 @@ PlotTrace(res, par_names, truth)
 
 
 
-ever_infected <- which(simulated_data$epi_data$exposure_times != -1)
-ever_infected <- ever_infected[order(simulated_data$epi_data$exposure_times[ever_infected])]
-exp_times <- simulated_data$epi_data$exposure_times
-inf_times <- simulated_data$epi_data$infection_times
-rem_times <- simulated_data$epi_data$removal_times
-source <- simulated_data$epi_data$source
 
-plot(0,type="n",ylim=c(0,length(ever_infected)),
-     xlim=c(0,max(simulated_data$epi_data$removal_times[ever_infected])),
-     yaxt="n", ylab="Person")
-for(i in 1:length(ever_infected)) {
-  person <- ever_infected[i]
-  segments(exp_times[person],i,inf_times[person],i,col="blue")
-  segments(inf_times[person],i,rem_times[person],i,col="green")
-  cur_source <- source[person]
-  if(cur_source != -1) {
-    source_loc <- which(cur_source == ever_infected)
-    arrows(exp_times[person],source_loc,exp_times[person],i,col="red")
-  }
-}
 
-gen_ids <- simulated_data$gen_data$observed$genetic_ids
-sample_times <- simulated_data$gen_data$observed$sample_times
-for(i in 1:length(gen_ids)) {
-  cur_id <- gen_ids[i]
-  loc <- which(ever_infected == cur_id)
-  cur_time <- sample_times[i]
-  text(cur_time, loc, i-1)
-}
-axis(2, at=1:length(ever_infected), labels=ever_infected-1)
 
+CalculateSourceInformation(res, simulated_data)
