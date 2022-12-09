@@ -1,3 +1,4 @@
 *.rds
 *.Rhistory
 *.dat
+**/dev
