@@ -434,6 +434,7 @@ Data::Data(int sequence_length_,
         break;
       }
       if(counter > num_tries) break;
+      counter++;
     }
     
     // If we get this far, try and reshuffle the sources
@@ -443,6 +444,7 @@ Data::Data(int sequence_length_,
       Data data_can((*this));
       data_can.ReshuffleSources();
       data_can.CalculateGenSourceVector();
+      std::vector<int> imported_idx = WhichVec(-1, data_can.gen_source);
       std::vector<int> coltime_distances_(imported_idx.size());
       data_can.coltime_distances = coltime_distances_;
       data_can.UpdateImputedNodes();
@@ -456,8 +458,8 @@ Data::Data(int sequence_length_,
       if(counter > num_tries)
       {
         stop("cannot find valid configuration");
-        counter++;
       }
+      counter++;
     }
   }
   else
@@ -475,8 +477,12 @@ void Data::ReshuffleSources()
 {
   for(auto i : ever_infected)
   {
-    std::vector<int> possible_infectors = ReturnPossibleInfectors(i);
-    source[i] = SampleVector(possible_infectors);
+    if(source[i] != -1)
+    {
+      std::vector<int> possible_infectors = ReturnPossibleInfectors(i);
+      if(possible_infectors.size() == 0) stop("No one to infect after source shuffle");
+      source[i] = SampleVector(possible_infectors);
+    }
   }
 }
 
@@ -759,7 +765,7 @@ void Data::CalculateExposureLikelihood(bool verbose)
 
 void Data::CalculateGeneticLikelihood(bool verbose)
 {
-  verbose = true;
+  //verbose = true;
   double genetic_likelihood_ = 0.0;
   double lambda = parameters[6]; // mutation rate
   
@@ -1879,9 +1885,21 @@ bool SameConfiguration(int imp_idx_cur, int imp_idx_can,
       // Check parent nodes are equal
       cur_parent = data_cur.gen_source[cur_node];
       can_parent = data_can.gen_source[can_node];
-      bool parent_nodes_equal = NodesEqual(cur_parent, can_parent,
-                                           data_cur, data_can);
-      if(!parent_nodes_equal) return false;
+      if(cur_parent != -1 && can_parent != -1)
+      {
+        bool parent_nodes_equal = NodesEqual(cur_parent, can_parent,
+                                             data_cur, data_can);
+        if(!parent_nodes_equal) return false;
+      }
+      else if(cur_parent == -1 && can_parent == -1)
+      {
+        // do nothing
+      }
+      else
+      {
+        return false;
+      }
+      
       
       // Check observed child nodes are equal
       std::vector<int> obs_ch_nodes_cur = data_cur.ReturnObservedChildren(cur_node);

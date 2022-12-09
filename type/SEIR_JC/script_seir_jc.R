@@ -32,7 +32,7 @@ mutation_pars <- c(lambda)
 sequence_length <- 8000
 
 
-simulate_data <- T
+simulate_data <- F
 if(simulate_data) {
   simulated_data <- SimulateData(num_individuals,
                                  num_initial_infectives,
@@ -50,7 +50,7 @@ if(simulate_data) {
   saveRDS(simulated_data, "simulated_data.rds")
 } else {
   if(file.exists("simulated_data.rds")) {
-    simulated_data <- readRDS("simulated_data.rds")
+    simulated_data <- readRDS("simulated_data_3.rds")
   }
 }
 
@@ -74,7 +74,7 @@ truth <- list("alpha" = alpha,
 par_names <- names(truth)
 
 MCMC_options <- list("initial_chain_state" = as.numeric(truth[1:7]),
-                     "iterations" = 5000,
+                     "iterations" = 500,
                      "prior_parameters" = list("alpha_shape" = 1e-3,
                                                "alpha_rate" = 1e-3,
                                                "beta_shape" = 1e-3,
@@ -105,7 +105,7 @@ MCMC_options <- list("initial_chain_state" = as.numeric(truth[1:7]),
                                                 "lambda" = 0.000001),
                      "num_aug_updates" = 50)
 
-#set.seed(2)
+set.seed(1)
 MCMC_SEIR_JC(MCMC_options,
              simulated_data$gen_data$observed$N,
              simulated_data$epi_data$exposure_times,
