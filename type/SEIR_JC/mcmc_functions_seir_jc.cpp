@@ -416,7 +416,7 @@ Data::Data(int sequence_length_,
   std::vector<int> coltime_distances_(imported_idx.size());
   
   bool impute_genetic_distances = true;
-  int num_tries = 500;
+  int num_tries = 5000;
   if(impute_genetic_distances)
   {
     bool valid_config = false;
@@ -4673,7 +4673,7 @@ void Data::UpdateExposureTime(int &nacc, bool verbose)
     if(possible_infectors_can.size()==0) return;
     
     // Sample a new source
-    int source_can = SampleNewSource(target, 2, log_prop_ratio, (*this), data_can);
+    int source_can = SampleNewSource(target, 1, log_prop_ratio, (*this), data_can);
     data_can.source[target] = source_can;
     
     double latent_period_cur = t_i[target]-t_e[target];
@@ -4806,7 +4806,7 @@ void MCMC_SEIR_JC(List MCMC_options,
   int nacc_dist_prop = 0;
   
   // Debug file
-  std::string debug_file = "debug_file.dat";
+  std::string debug_file = MCMC_options["debug_file"];
   remove(debug_file.c_str());
   std::ofstream myfile2;
   myfile2.open(debug_file.c_str());
