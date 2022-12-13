@@ -341,6 +341,354 @@ SimulateOutbreak <- function(num_individuals,
   }
 }
 
+## Simulates an outbreak with background transmission
+#
+# Parameters
+# transmission_kernel - Spatial, Homogenous
+# tranmission_kernel_pars - Spatial(beta, kappa), homogenous(beta)
+# inf_period_distribution - (R_i-I_i) Exponential, Gamma, Weibull
+# inf_period_pars - Exp(rate), Gamma(shape,rate), Weibull(shape,scale)
+# lat_period_distribution - (I_i-E_i) Exponential, Gamma, Weibull
+# lat_period_pars - Exp(rate), Gamma(shape,rate), Weibull(shape,scale)
+# kernel - h_ij in the distance - Spatial kernel, homogenous
+# kernel_pars - Spatial(kappa)
+SimulateOutbreak_bkg <- function(num_individuals,
+                                 T_end,
+                             transmission_kernel,
+                             transmisison_kernel_pars,
+                             inf_period_distribution,
+                             inf_period_pars,
+                             lat_period_distribution = NA,
+                             lat_period_pars = NA) {
+  
+  
+  total_pop <- num_individuals
+  
+  ## Settings for the infectious period distribution
+  if(inf_period_distribution == "Exp") {
+    if(length(inf_period_pars) == 1) {
+      inf_rate = inf_period_pars
+      rand_inf_period <- function() rexp(1, inf_rate)
+    } else {
+      stop("Incorrect number of infectious period parameters")
+    }
+  } else if(inf_period_distribution == "Gamma") {
+    if(length(inf_period_pars) == 2) {
+      inf_shape = inf_period_pars[1]
+      inf_rate = inf_period_pars[2]
+      rand_inf_period <- function() rgamma(1, shape = inf_shape, rate = inf_rate)
+    } else {
+      stop("Incorrect number of infectious period parameters")
+    }
+  } else if(inf_period_distribution == "Weibull") {
+    if(length(inf_period_pars) == 2) {
+      inf_shape = inf_period_pars[1]
+      inf_scale = inf_period_pars[2]
+      rand_inf_period <- function() rweibull(1, inf_shape, inf_scale)
+    } else {
+      stop("Incorrect number of infectious period parameters")
+    }
+  } else {
+    stop("Infectious period distribution not known")
+  }
+  
+  ## Settings for the transmission kernel
+  if(transmission_kernel == "Homogenous") {
+    if(length(transmission_kernel_pars) == 1) {
+      trans_kernel <- function(i,j) beta
+    } else {
+      stop("Incorrect number of parameters for transmission kernel")
+    }
+  } else if(transmission_kernel == "Spatial") {
+    if(length(transmission_kernel_pars) == 2) {
+      trans_kernel <- function(i,j,x_coords,y_coods) {
+        beta <- transmission_kernel_pars[1]
+        kappa <- transmission_kernel_pars[2]
+        euclidian_distance <- sqrt((x_coords[i]-x_coords[j])^2+
+                                     (y_coords[i]-y_coords[j])^2)
+        return(beta*exp(-kappa*euclidian_distance))
+      }
+    } else {
+      stop("Incorrect number of parameters for transmission kernel")
+    }
+  } else if(transmission_kernel == "Spatial_b") {
+    ## spatial transmission kernel with background transmission
+    if(length(transmission_kernel_pars) == 3) {
+      trans_kernel <- function(i,j,x_coords,y_coods) {
+        beta <- transmission_kernel_pars[1]
+        beta0 <- transmission_kernel_pars[2]
+        kappa <- transmission_kernel_pars[3]
+        euclidian_distance <- sqrt((x_coords[i]-x_coords[j])^2+
+                                     (y_coords[i]-y_coords[j])^2)
+        return(beta*exp(-kappa*euclidian_distance))
+      }
+    }
+  }
+  
+  
+  if(is.na(lat_period_distribution)) {
+    ## Simulate from the SIR model
+    # individual coordinates
+    
+    x_coords <- runif(total_pop)
+    y_coords <- runif(total_pop)
+    
+    # indicator vectors, ith element = 1 iff they belong in that class
+    S <- rep(1,total_pop)
+    I <- numeric(total_pop)
+    R <- numeric(total_pop)
+    
+    source <- rep(-2,total_pop)
+    
+    # matrix of transition times, 
+    # first column is infection time
+    # second column is removal time
+    times <- matrix(NA,nrow=total_pop,ncol=2)
+    
+    # record time
+    t <- 0
+    while(sum(S) > 0 && t < T_end) {
+      # Generate times until next event
+      S_idx <- which(S==1)
+      I_idx <- which(I==1)
+      
+      ## For each susceptible, genetic the time to infection
+      next_infection <- NA
+      next_infection_time <- Inf
+      next_infection_source <- NA
+      #browser()
+      currently_infective <- c(which(times[,1] <= t & times[,2] > t), -1)
+      
+      for(i in S_idx) {
+        infectious_pressure <- numeric(length(currently_infective))
+        if(length(currently_infective > 1)) {
+          for(j in 1:length(currently_infective)) {
+            cur_infective <- currently_infective[j]
+            if(cur_infective == -1) {
+              infectious_pressure[j] <- beta0
+            } else {
+              infectious_pressure[j] <- trans_kernel(i, cur_infective,
+                                                     x_coords, y_coords)
+            }
+
+              
+          }
+        }
+        cur_infection_time <- t + rexp(1, rate=sum(infectious_pressure))
+        if(cur_infection_time < next_infection_time) {
+          next_infection <- i
+          next_infection_time <- cur_infection_time
+          next_infection_source <- sample(currently_infective, 
+                                          size=1,
+                                          prob=infectious_pressure/
+                                            sum(infectious_pressure))
+        }
+      }
+      
+      
+      
+      
+      #browser()
+      # look at the next removal time (I->R transition)
+      next_removal <- I_idx[which.min(times[I_idx,2])]
+      if(length(next_removal)==0) {
+        next_removal_time <- Inf
+      } else {
+        next_removal_time <- times[next_removal,2]
+      }
+      #browser()
+      
+      event_times <- c(next_infection_time,
+                       next_removal_time)
+      
+      next_event <- which.min(event_times)
+      #browser()
+      if(next_event==1) {
+        # Infection has occurred (S -> E)
+        S[next_infection] <- 0
+        I[next_infection] <- 1
+        times[next_infection,1] <- next_infection_time
+        times[next_infection,2] <- next_infection_time + rand_inf_period()
+        source[next_infection] <- next_infection_source
+        t <- next_infection_time
+      } else if(next_event==2) {
+        # An exposed individual is now infective (E->I)
+        I[next_removal] <- 0
+        R[next_removal] <- 1
+        t <- next_removal_time
+      } 
+    }
+    out <- data.frame("infection_times" = times[,1],
+                      "removal_times" = times[,2],
+                      "source" = source,
+                      "x" = x_coords,
+                      "y" = y_coords)
+    return(out)
+  } else {
+    ## Simulate from the SEIR model
+    
+    ## Settings for latent period
+    if(lat_period_distribution == "Exp") {
+      if(length(lat_period_pars) == 1) {
+        lat_rate = lat_period_pars
+        rand_lat_period <- function() rexp(1, lat_rate)
+      } else {
+        stop("Incorrect number of latent period parameters")
+      }
+    } else if(lat_period_distribution == "Gamma") {
+      if(length(lat_period_pars) == 2) {
+        lat_shape = lat_period_pars[1]
+        lat_rate = lat_period_pars[2]
+        rand_lat_period <- function() rgamma(1, shape = lat_shape, rate = lat_rate)
+      } else {
+        stop("Incorrect number of latent period parameters")
+      }
+    } else if(lat_period_distribution == "Weibull") {
+      if(length(lat_period_pars) == 2) {
+        lat_shape = lat_period_pars[1]
+        lat_scale = lat_period_pars[2]
+        rand_lat_period <- function() rweibull(1, lat_shape, lat_scale)
+      } else {
+        stop("Incorrect number of latent period parameters")
+      }
+    } else {
+      stop("Latent period distribution not known")
+    }
+    
+    ## Simulate data
+    x_coords <- runif(total_pop)
+    y_coords <- runif(total_pop)
+    
+    # indicator vectors, ith element = 1 iff they belong in that class
+    S <- rep(1,total_pop)
+    E <- numeric(total_pop)
+    I <- numeric(total_pop)
+    R <- numeric(total_pop)
+    
+    source <- rep(-1,total_pop)
+    
+    # matrix of transition times, first column in exposure time
+    # second column is infection time
+    # third column is removal time
+    # fourth is lesion time
+    times <- matrix(NA,nrow=total_pop,ncol=3)
+    
+    ## Update vectors with initial conditions
+    initial_infective <- sample(1:total_pop,size=num_initial_infectives)
+    S[initial_infective] <- 0
+    E[initial_infective] <- 1
+    times[initial_infective,1] <- 0
+    inf_time <- rand_lat_period()
+    #rem_time <- inf_time + rgamma(1,delta,gamma)
+    rem_time <- inf_time + rand_inf_period()
+    times[initial_infective,2] <- inf_time
+    times[initial_infective,3] <- rem_time
+    source[initial_infective] <- -1
+    
+    # record time
+    t <- 0
+    while((sum(I) > 0 || sum(E) > 0) && sum(S) > 0) {
+      # Generate times until next event
+      #browser()
+      S_idx <- which(S==1)
+      E_idx <- which(E==1)
+      I_idx <- which(I==1)
+      
+      ## For each susceptible, genetic the time to infection
+      next_exposure <- NA
+      next_exposure_time <- Inf
+      next_exposure_source <- NA
+      #browser()
+      currently_infective <- which(times[,2] <= t & times[,3] > t)
+      for(i in S_idx) {
+        if(length(currently_infective) > 0) {
+          #browser()
+          infectious_pressure <- numeric(length(currently_infective))
+          for(j in 1:length(currently_infective)) {
+            cur_infective <- currently_infective[j]
+            infectious_pressure[j] <- trans_kernel(i, cur_infective,
+                                                   x_coords, y_coords)
+          }
+          
+          cur_exposure_time <- t + rexp(1, rate=sum(infectious_pressure))
+          if(cur_exposure_time < next_exposure_time) {
+            #browser()
+            next_exposure <- i
+            next_exposure_time <- cur_exposure_time
+            if(length(currently_infective)==1) {
+              next_exposure_source <- currently_infective
+            } else {
+              next_exposure_source <- sample(currently_infective, size=1,
+                                             prob=infectious_pressure/
+                                               sum(infectious_pressure))
+            }
+          }
+        }
+      }
+      
+      #browser()
+      ## find the time to the next E->I transition
+      next_infective <- E_idx[which.min(times[E_idx,2])]
+      if(length(next_infective)==0) {
+        next_infective_time <- Inf
+      } else {
+        next_infective_time <- times[next_infective,2]
+      }
+      
+      
+      # look at the next removal time (I->R transition)
+      next_removal <- I_idx[which.min(times[I_idx,3])]
+      if(length(next_removal)==0) {
+        next_removal_time <- Inf
+      } else {
+        next_removal_time <- times[next_removal,3]
+      }
+      #browser()
+      
+      event_times <- c(next_exposure_time, 
+                       next_infective_time,
+                       next_removal_time)
+      
+      next_event <- which.min(event_times)
+      
+      if(next_event==1) {
+        # Exposure has occured (S -> E)
+        #browser()
+        S[next_exposure] <- 0
+        E[next_exposure] <- 1
+        next_inf_time <- next_exposure_time + rand_lat_period()
+        #next_rem_time <- next_inf_time + rgamma(1,delta,gamma)
+        next_rem_time <- next_inf_time + rand_inf_period()
+        times[next_exposure,1] <- next_exposure_time
+        times[next_exposure,2] <- next_inf_time
+        times[next_exposure,3] <- next_rem_time
+        source[next_exposure] <- next_exposure_source
+        t <- next_exposure_time
+      } else if(next_event==2) {
+        # An exposed individual is now infective (E->I)
+        E[next_infective] <- 0
+        I[next_infective] <- 1
+        t <- next_infective_time
+      } else {
+        # Removal has occured (I -> R)
+        I[next_removal] <- 0
+        R[next_removal] <- 1
+        t <- next_removal_time
+      }
+      #browser()
+    }
+    
+    
+    out <- data.frame("exposure_times" = times[,1],
+                      "infection_times" = times[,2],
+                      "removal_times" = times[,3],
+                      "source" = source,
+                      "x" = x_coords,
+                      "y" = y_coords)
+    return(out)
+  }
+}
+
 
 SimulateObservations <- function(outbreak, observational_model) {
   if(observational_model == "Uniform") {
@@ -780,6 +1128,74 @@ SimulateData <- function(num_individuals,
   return(out)
 } 
 
+
+
+## Simulate data from the model (with background)
+SimulateData_bkg <- function(num_individuals,
+                             T_end,
+                         transmission_kernel,
+                         transmisison_kernel_pars,
+                         inf_period_distribution,
+                         inf_period_pars,
+                         lat_period_distribution,
+                         lat_period_pars,
+                         observation_model,
+                         mutation_model,
+                         mutation_pars,
+                         fs_lim = NA) {
+  
+  ## First simulate epi data
+  #browser()
+  counter <- 0
+  repeat {
+    counter <- counter + 1
+    outbreak_data <- SimulateOutbreak_bkg(num_individuals,
+                                          T_end,
+                                      transmission_kernel,
+                                      transmisison_kernel_pars,
+                                      inf_period_distribution,
+                                      inf_period_pars,
+                                      lat_period_distribution,
+                                      lat_period_pars)
+    final_size <- sum(!is.na(outbreak_data$infection_times))
+    #browser()
+    if(any(is.na(fs_lim)) || (final_size >= fs_lim[1] && final_size <= fs_lim[2])) {
+      break
+    }
+    
+    if(counter > 200) {
+      stop("final size limit too restrictive with parameter choices")
+    }
+  }
+  #browser()
+  ## Simulate observations
+  outbreak_data <- SimulateObservations(outbreak_data, observation_model)
+  #browser()
+  if(is.na(mutation_model)) {
+    gen_data <- NA
+  } else {
+    ## Simulate genetic data
+    gen_data <- SimulateGeneticData(outbreak_data,
+                                    sequence_length,
+                                    mutation_model,
+                                    mutation_pars) 
+  }
+  
+  
+  
+  # Final formatting for MCMC
+  if("exposure_times" %in% colnames(outbreak_data)) {
+    outbreak_data$exposure_times[is.na(outbreak_data$exposure_times)] <- -1
+  }
+  outbreak_data$infection_times[is.na(outbreak_data$infection_times)] <- -1
+  outbreak_data$removal_times[is.na(outbreak_data$removal_times)] <- -1
+  outbreak_data$symptom_times[is.na(outbreak_data$symptom_times)] <- -1
+  
+  out <- list("epi_data" = outbreak_data,
+              "gen_data" = gen_data)
+  return(out)
+} 
+
 ProcessOutputMCMC_SEIR_K80 <- function(filename, parameters) {
   num_parameters <- length(parameters)
   
@@ -809,6 +1225,39 @@ ProcessOutputMCMC_SEIR_K80 <- function(filename, parameters) {
                                function(x) sum(x[x!=-1]))
     out$infection_times <- res[,(num_parameters+1):(num_parameters+N)]
     out$source <- res[,((num_parameters+N)+1):ncol(res)]
+  } 
+  return(out)
+}
+
+ProcessOutputMCMC_SIR_B <- function(filename, parameters) {
+  num_parameters <- length(parameters)
+  
+  ## work out how to do this better in future with different types
+  num_parameters <- num_parameters - 1 # correction for the loglik
+  res <- read.table(filename)
+  #browser()
+  if(!is.na(lat_period_distribution)) {
+    N <- (ncol(res)-num_parameters-1)/3  
+  } else {
+    N <- (ncol(res)-num_parameters-1)/2
+  }
+  #browser()
+  out <- lapply(1:(num_parameters+1), function(i) res[,i])
+  names(out) <- c(parameters[1:5],"loglik")
+  if(!is.na(lat_period_distribution)) {
+    out$exposure_sum <- apply(res[,(num_parameters+1):(N+num_parameters)], 1,
+                              function(x) sum(x[x!=-1]))
+    out$infection_sum <- apply(res[,(N+num_parameters+1):(2*N+num_parameters)], 1,
+                               function(x) sum(x[x!=-1]))
+    out$exposure_times <- res[,(num_parameters+1):(N+num_parameters)]
+    out$infection_times <- res[,(N+num_parameters+1):(2*N+num_parameters)]
+    out$source <- res[,(2*N+num_parameters+1):(3*N+num_parameters)]
+  } else {
+    ## implement functionality for this later 
+    out$infection_sum <- apply(res[,(num_parameters+2):(num_parameters+1+N)],1,
+                               function(x) sum(x[x!=-1]))
+    out$infection_times <- res[,(num_parameters+2):(num_parameters+1+N)]
+    out$source <- res[,((num_parameters+N)+1+1):ncol(res)]
   } 
   return(out)
 }
